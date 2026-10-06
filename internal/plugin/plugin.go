@@ -34,6 +34,7 @@ package plugin
 
 import (
 	"fmt"
+	"os"
 	"sort"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -71,6 +72,13 @@ type devicePlugin struct {
 	scheme      *runtime.Scheme
 	isOpenShift bool
 }
+
+var sysHostPath = func() string {
+	if os.Getenv("SIM_ENABLE") == "true" {
+		return "/var/lib/amd-gpu-mock/sys"
+	}
+	return "/sys"
+}()
 
 func NewDevicePlugin(client client.Client, scheme *runtime.Scheme, isOpenShift bool) DevicePluginAPI {
 	return &devicePlugin{
@@ -149,7 +157,7 @@ func (dp *devicePlugin) SetDevicePluginAsDesired(ds *appsv1.DaemonSet, devConfig
 		initContainerImage = devConfig.Spec.CommonConfig.InitContainerImage
 	}
 
-	initContainerCommand := "while [ ! -d /sys/class/kfd ] || [ ! -d /sys/module/amdgpu/drivers/ ]; do echo \"amdgpu driver is not loaded \"; sleep 2 ;done"
+	initContainerCommand := "if [ \"$SIM_ENABLE\" = \"true\" ]; then exit 0; fi; while [ ! -d /sys/class/kfd ] || [ ! -d /sys/module/amdgpu/drivers/ ]; do echo \"amdgpu driver is not loaded \"; sleep 2 ;done"
 	switch devConfig.Spec.Driver.DriverType {
 	case utils.DriverTypeVFPassthrough:
 		initContainerCommand = "while [ ! -d /sys/module/gim/drivers/ ]; do echo \"gim driver is not loaded \"; sleep 2 ;done"
@@ -170,6 +178,12 @@ func (dp *devicePlugin) SetDevicePluginAsDesired(ds *appsv1.DaemonSet, devConfig
 						Image:           initContainerImage,
 						Command:         []string{"sh", "-c", initContainerCommand},
 						SecurityContext: &v1.SecurityContext{Privileged: ptr.To(true)},
+						Env: []v1.EnvVar{
+							{
+								Name:  "SIM_ENABLE",
+								Value: os.Getenv("SIM_ENABLE"),
+							},
+						},
 						VolumeMounts: []v1.VolumeMount{
 							{
 								Name:      "sys",
@@ -230,7 +244,7 @@ func (dp *devicePlugin) SetDevicePluginAsDesired(ds *appsv1.DaemonSet, devConfig
 						Name: "sys",
 						VolumeSource: v1.VolumeSource{
 							HostPath: &v1.HostPathVolumeSource{
-								Path: "/sys",
+								Path: sysHostPath,
 								Type: &hostPathDirectory,
 							},
 						},
@@ -327,7 +341,7 @@ func (dp *devicePlugin) SetDRADriverAsDesired(ds *appsv1.DaemonSet, devConfig *a
 		initContainerImage = devConfig.Spec.CommonConfig.InitContainerImage
 	}
 
-	initContainerCommand := "while [ ! -d /sys/class/kfd ] || [ ! -d /sys/module/amdgpu/drivers/ ]; do echo \"amdgpu driver is not loaded \"; sleep 2 ;done"
+	initContainerCommand := "if [ \"$SIM_ENABLE\" = \"true\" ]; then exit 0; fi; while [ ! -d /sys/class/kfd ] || [ ! -d /sys/module/amdgpu/drivers/ ]; do echo \"amdgpu driver is not loaded \"; sleep 2 ;done"
 
 	ds.Spec = appsv1.DaemonSetSpec{
 		Selector: &metav1.LabelSelector{MatchLabels: matchLabels},
@@ -342,6 +356,12 @@ func (dp *devicePlugin) SetDRADriverAsDesired(ds *appsv1.DaemonSet, devConfig *a
 						Image:           initContainerImage,
 						Command:         []string{"sh", "-c", initContainerCommand},
 						SecurityContext: &v1.SecurityContext{Privileged: ptr.To(true)},
+						Env: []v1.EnvVar{
+							{
+								Name:  "SIM_ENABLE",
+								Value: os.Getenv("SIM_ENABLE"),
+							},
+						},
 						VolumeMounts: []v1.VolumeMount{
 							{
 								Name:      "sys",
@@ -460,7 +480,7 @@ func (dp *devicePlugin) SetDRADriverAsDesired(ds *appsv1.DaemonSet, devConfig *a
 						Name: "sys",
 						VolumeSource: v1.VolumeSource{
 							HostPath: &v1.HostPathVolumeSource{
-								Path: "/sys",
+								Path: sysHostPath,
 							},
 						},
 					},

@@ -34,6 +34,7 @@ package nodelabeller
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -70,6 +71,13 @@ type nodeLabeller struct {
 	scheme      *runtime.Scheme
 	isOpenShift bool
 }
+
+var sysHostPath = func() string {
+	if os.Getenv("SIM_ENABLE") == "true" {
+		return "/var/lib/amd-gpu-mock/sys"
+	}
+	return "/sys"
+}()
 
 func NewNodeLabeller(scheme *runtime.Scheme, isOpenshift bool) NodeLabeller {
 	return &nodeLabeller{
@@ -120,7 +128,7 @@ func (nl *nodeLabeller) SetNodeLabellerAsDesired(ds *appsv1.DaemonSet, devConfig
 			Name: "sys-volume",
 			VolumeSource: v1.VolumeSource{
 				HostPath: &v1.HostPathVolumeSource{
-					Path: "/sys",
+					Path: sysHostPath,
 					Type: &hostPathDirectory,
 				},
 			},
@@ -152,6 +160,12 @@ func (nl *nodeLabeller) SetNodeLabellerAsDesired(ds *appsv1.DaemonSet, devConfig
 			Image:           initContainerImage,
 			Command:         initContainerCommand,
 			SecurityContext: &v1.SecurityContext{Privileged: ptr.To(true)},
+			Env: []v1.EnvVar{
+				{
+					Name:  "SIM_ENABLE",
+					Value: os.Getenv("SIM_ENABLE"),
+				},
+			},
 			VolumeMounts:    initVolumeMounts,
 		},
 	}
@@ -274,7 +288,7 @@ func getDevicePluginVersion(devConfig *amdv1alpha1.DeviceConfig) string {
 func getNodeLabellerInitContainerCommand(devConfig *amdv1alpha1.DeviceConfig, blackListFileName string) []string {
 	if devConfig.Spec.Driver.Blacklist != nil && *devConfig.Spec.Driver.Blacklist {
 		// if users want to apply the blacklist, init container will add the amdgpu to the blacklist
-		initContainerCommand := []string{"sh", "-c", fmt.Sprintf("echo \"# added by gpu operator \nblacklist amdgpu\" > /host-etc/modprobe.d/%v; while [ ! -d /host-sys/class/kfd ] || [ ! -d /host-sys/module/amdgpu/drivers/ ]; do echo \"amdgpu driver is not loaded \"; sleep 2 ;done", blackListFileName)}
+		initContainerCommand := []string{"sh", "-c", fmt.Sprintf("echo \"# added by gpu operator \nblacklist amdgpu\" > /host-etc/modprobe.d/%v; if [ \"$SIM_ENABLE\" = \"true\" ]; then exit 0; fi; while [ ! -d /host-sys/class/kfd ] || [ ! -d /host-sys/module/amdgpu/drivers/ ]; do echo \"amdgpu driver is not loaded \"; sleep 2 ;done", blackListFileName)}
 		switch devConfig.Spec.Driver.DriverType {
 		case utils.DriverTypeVFPassthrough:
 			initContainerCommand = []string{"sh", "-c", fmt.Sprintf("echo \"# added by gpu operator \nblacklist amdgpu\" > /host-etc/modprobe.d/%v; while [ ! -d /host-sys/module/gim/drivers/ ]; do echo \"gim driver is not loaded \"; sleep 2 ;done", blackListFileName)}
@@ -285,7 +299,7 @@ func getNodeLabellerInitContainerCommand(devConfig *amdv1alpha1.DeviceConfig, bl
 	} else {
 		// if users disabled the KMM driver, or disabled the blacklist
 		// init container will remove any hanging amdgpu blacklist entry from the list
-		initContainerCommand := []string{"sh", "-c", fmt.Sprintf("rm -f /host-etc/modprobe.d/%v; while [ ! -d /host-sys/class/kfd ] || [ ! -d /host-sys/module/amdgpu/drivers/ ]; do echo \"amdgpu driver is not loaded \"; sleep 2 ;done", blackListFileName)}
+		initContainerCommand := []string{"sh", "-c", fmt.Sprintf("rm -f /host-etc/modprobe.d/%v; if [ \"$SIM_ENABLE\" = \"true\" ]; then exit 0; fi; while [ ! -d /host-sys/class/kfd ] || [ ! -d /host-sys/module/amdgpu/drivers/ ]; do echo \"amdgpu driver is not loaded \"; sleep 2 ;done", blackListFileName)}
 		switch devConfig.Spec.Driver.DriverType {
 		case utils.DriverTypeVFPassthrough:
 			initContainerCommand = []string{"sh", "-c", fmt.Sprintf("rm -f /host-etc/modprobe.d/%v; while [ ! -d /host-sys/module/gim/drivers/ ]; do echo \"gim driver is not loaded \"; sleep 2 ;done", blackListFileName)}
